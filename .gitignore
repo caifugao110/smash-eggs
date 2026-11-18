@@ -11,6 +11,13 @@ desktop.ini
 *.swo
 *~
 
+# 本地语音缓存（运行时自动生成，不需提交）
+cache/
+
+# Python 编译缓存
+__pycache__/
+*.pyc
+
 # 临时文件
 *.tmp
 *.log

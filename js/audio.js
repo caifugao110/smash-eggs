@@ -1,16 +1,20 @@
 /**
- * smash-eggs · 音效引擎
- * 全部音效由 Web Audio API 实时合成，零外部资源、可离线运行。
- * 朗读使用浏览器内置 Speech Synthesis：自动优先挑选系统童声，并支持手动切换音色。
+ * smash-eggs · 音效与朗读引擎
+ * 音效由 Web Audio API 实时合成；朗读优先播放本地服务器生成的真实神经网络童声，
+ * 服务器不可用时自动回退到浏览器内置语音合成（保证纯静态打开仍可用）。
  */
 
 const Sound = (function () {
   let ctx = null;
   let bgmTimer = null;
   let bgmStep = 0;
-  let settings = { soundOn: true, bgmOn: false, speechOn: true, style: 0, voiceURI: '', volume: 0.8 };
+  let settings = {
+    soundOn: true, bgmOn: false, speechOn: true, style: 0, voiceURI: '',
+    volume: 0.8, serverSpeech: true, serverUrl: ''
+  };
+  let currentAudio = null;
+  const prefetchPool = [];
 
-  // 童声优先：命中系统里的儿童音色，再用适度变调兜底，避免过度升调产生的机械感
   const CHILD_RE = /xiaoyou|yunxia|xiaoshuang|child|kid|童|宝宝|萌/i;
 
   const STYLES = [
@@ -91,7 +95,6 @@ const Sound = (function () {
     return window.speechSynthesis.getVoices() || [];
   }
 
-  // 可选音色列表：只列中文语音，童声排在最前
   function listVoices() {
     const vs = allVoices().filter(v =>
       /^(zh|cmn)/i.test(v.lang || '') || /chinese|普通话|中文/i.test(v.name || ''));
@@ -131,15 +134,58 @@ const Sound = (function () {
 
   function isLatin(text) { return /^[A-Za-z][A-Za-z\s]*$/.test(text || ''); }
 
-  function speak(text) {
-    if (!settings.speechOn) return;
+  /* ---------- 本地服务器童声 ---------- */
+  function serverBase() {
+    if (settings.serverUrl && String(settings.serverUrl).trim())
+      return String(settings.serverUrl).trim().replace(/\/+$/, '');
+    // 直接双击 index.html 打开时，默认找本机的童声服务器
+    if (location.protocol === 'file:') return 'http://127.0.0.1:8000';
+    return ''; // 通过服务器访问时，用同源地址
+  }
+
+  function speakUrl(text, style) {
+    return serverBase() + '/api/speak?text=' + encodeURIComponent(text) + '&style=' + (style || 0);
+  }
+
+  // 预加载：进入关卡时把可能出现的文字提前请求并缓存，点开即读
+  function prefetch(texts) {
+    if (!settings.serverSpeech || !settings.speechOn) return;
+    const base = serverBase();
+    (texts || []).slice(0, 40).forEach(t => {
+      if (!t) return;
+      const a = new Audio(base + '/api/speak?text=' + encodeURIComponent(t) + '&style=' + (settings.style || 0));
+      a.preload = 'auto';
+      a.volume = 0; // 只触发缓存，不发声
+      prefetchPool.push(a);
+      if (prefetchPool.length > 120) prefetchPool.shift();
+    });
+  }
+
+  function speakServer(text, style) {
+    if (currentAudio) { try { currentAudio.pause(); } catch (e) {} currentAudio = null; }
+    const a = new Audio(speakUrl(text, style));
+    currentAudio = a;
+    a.onerror = function () {
+      if (currentAudio === a) { currentAudio = null; speakBrowser(text, style); }
+    };
+    a.onended = function () { if (currentAudio === a) currentAudio = null; };
+    try {
+      const p = a.play();
+      if (p && typeof p.catch === 'function') p.catch(function () {
+        if (currentAudio === a) { currentAudio = null; speakBrowser(text, style); }
+      });
+    } catch (e) { speakBrowser(text, style); }
+  }
+
+  /* ---------- 浏览器内置语音（回退） ---------- */
+  function speakBrowser(text, style) {
     const syn = window.speechSynthesis;
     if (!syn) return;
     let clean = String(text || '').replace(/\s+/g, ' ').trim();
     if (!clean) return;
     const latin = isLatin(clean);
     if (!latin) clean = clean.replace(/[，。、；：,.!?！？]+$/, '');
-    const st = STYLES[settings.style] || STYLES[0];
+    const st = STYLES[style] || STYLES[0];
     try {
       syn.cancel();
       const u = new SpeechSynthesisUtterance(clean);
@@ -155,14 +201,21 @@ const Sound = (function () {
     } catch (e) {}
   }
 
+  function speak(text) {
+    if (!settings.speechOn) return;
+    const clean = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!clean) return;
+    if (settings.serverSpeech) speakServer(clean, settings.style);
+    else speakBrowser(clean, settings.style);
+  }
+
   function vibrate(pattern) {
     try { if (navigator.vibrate) navigator.vibrate(pattern || 25); } catch (e) {}
   }
 
   return {
-    configure, unlock, fx, speak, startBgm, stopBgm, vibrate,
-    pickVoice, bestVoice, listVoices,
-    STYLES,
+    configure, unlock, fx, speak, prefetch, startBgm, stopBgm, vibrate,
+    pickVoice, bestVoice, listVoices, STYLES, serverBase,
     get settings() { return settings; }
   };
 })();

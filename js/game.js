@@ -11,6 +11,7 @@
   const DEFAULTS = {
     // 声音
     soundOn: true, bgmOn: false, speechOn: true, style: 0, voiceURI: '', volume: 0.8,
+    serverSpeech: true, serverUrl: '',   // 真实童声：由本地服务器合成，局域网共享
     // 难度
     eggCount: 0,        // 0 = 按关卡自动；否则 3~8
     targetCount: 0,     // 0 = 按关卡自动；否则 2~4
@@ -50,7 +51,7 @@
   }
   function save() { try { localStorage.setItem(STORE, JSON.stringify(S)); } catch (e) {} }
   function syncAudio() {
-    Sound.configure({ soundOn:S.soundOn, bgmOn:S.bgmOn, speechOn:S.speechOn, style:S.style, voiceURI:S.voiceURI, volume:S.volume });
+    Sound.configure({ soundOn:S.soundOn, bgmOn:S.bgmOn, speechOn:S.speechOn, style:S.style, voiceURI:S.voiceURI, volume:S.volume, serverSpeech:S.serverSpeech, serverUrl:S.serverUrl });
   }
 
   /* ---------- 工具 ---------- */
@@ -225,8 +226,10 @@
       '<div class="learn-bar" id="learnBar"><div class="l-emoji">🐣</div><div>'+
         '<div class="l-char">点一点金蛋</div><div class="l-word">砸开就能看到汉字朋友啦！</div></div></div>'+
       '<div class="tip">💡 不用着急，答错了也没关系，再试一次就好～</div></div>');
+    // 提前请求本关所有文字，服务器合成后浏览器缓存，点击即播不卡顿
+    const lv=state.level;
+    Sound.prefetch(lv.eggs.map(function(e){return e.c;}).concat(lv.targets.map(function(t){return t.c;})));
     if (S.autoSpeak) {
-      const lv=state.level;
       setTimeout(()=>Sound.speak(lv.targets[state.idx].c), lv.mode===1?350:300);
     }
   }
@@ -382,12 +385,15 @@
         toggleRow('soundOn','游戏音效','🔊')+
         toggleRow('bgmOn','背景音乐','🎵')+
         toggleRow('speechOn','汉字朗读','🗣️')+
+        toggleRow('serverSpeech','真实童声（本地服务器）','🧒')+
         toggleRow('autoSpeak','自动朗读','🔁')+
         '<div class="set-col"><div class="set-label">🎨 朗读音色</div><div class="chips">'+voiceChips()+'</div></div>'+
-        '<div class="set-row"><span style="font-size:24px">🧒</span><span class="txt">系统童声</span>'+
+        '<div class="set-row"><span style="font-size:24px">🌐</span><span class="txt">服务器地址</span>'+
+          '<input data-action="server-url" value="'+(S.serverUrl||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')+'" placeholder="留空=本机/同源" style="max-width:190px;border-radius:10px;border:2px solid #FFE0A3;padding:6px;font-family:inherit;font-size:13px"></div>'+
+        '<div class="set-row"><span style="font-size:24px">🧒</span><span class="txt">回退音色</span>'+
           '<select data-action="set-voice" style="max-width:150px;border-radius:10px;border:2px solid #FFE0A3;padding:6px;font-family:inherit;font-size:13px">'+voiceOptions()+'</select>'+
           '<button class="icon-btn" data-action="try-voice" style="width:46px;height:46px;font-size:21px">🔊</button></div>'+
-        '<p class="muted" style="margin:4px 0 10px;line-height:1.6">优先自动挑选系统里的儿童音色；若声音仍偏生硬，可在此切换其他音色，或改用 Edge 浏览器（自带更自然的在线童声）。</p>'+
+        '<p class="muted" style="margin:4px 0 10px;line-height:1.6">开启「真实童声」后，汉字由本地服务器合成真实儿童音色，自然不生硬，局域网内设备共享。首次使用请双击运行 <b>start.bat</b> 启动服务器；服务器不可用时自动退回系统语音。</p>'+
         '<div class="set-row"><span style="font-size:24px">🎚️</span><span class="txt">音量</span>'+
           '<input type="range" min="0" max="100" value="'+Math.round(S.volume*100)+'" data-action="volume" style="width:140px"></div>'+
       '</div>'+
@@ -422,7 +428,8 @@
         '· 砸开金蛋找到目标字就会朗读并发星星；答错不扣分，可以一直试。<br>'+
         '· 星星解锁后续关卡，字卡自动收藏，点击即可重听。<br>'+
         '· 手机/平板可直接触屏操作，长按字卡可连续朗读。<br><br><b>小提示</b><br>'+
-        '· 若听不到朗读，请在系统中安装中文语音包。<br>'+
+        '· 真实童声需先运行 start.bat 启动本地服务器；手机与电脑连同一个 WiFi 即可共享。<br>'+
+        '· 若未启动服务器，朗读会自动退回系统语音（建议在系统中安装中文语音包）。<br>'+
         '· 所有进度只保存在本机浏览器，导出功能可备份。'+
       '</div>'+
       '<div style="text-align:center;margin-top:18px"><button class="btn ghost sm" data-action="reset">🗑️ 清空全部进度</button></div>'+
@@ -462,6 +469,7 @@
         if (k==='bigFont') document.body.classList.toggle('big-font',S.bigFont);
         if (k==='bgmOn' && S.bgmOn) toast('音乐打开啦 🎵');
         if (k==='speechOn' && S.speechOn) Sound.speak('你好呀');
+        if (k==='serverSpeech') { syncAudio(); if (S.serverSpeech) Sound.speak('小宝贝，我们来学汉字啦'); }
         if (k==='vibrate') buzz(30);
         save();
         break;
@@ -521,6 +529,9 @@
   document.addEventListener('input', function(e) {
     if (e.target.dataset.action==='volume') {
       S.volume=(+e.target.value)/100; syncAudio(); save();
+    }
+    if (e.target.dataset.action==='server-url') {
+      S.serverUrl=e.target.value.trim(); syncAudio(); save();
     }
   });
 
