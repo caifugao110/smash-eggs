@@ -1,20 +1,24 @@
 /**
  * smash-eggs · 音效引擎
  * 全部音效由 Web Audio API 实时合成，零外部资源、可离线运行。
- * 朗读使用浏览器内置 Speech Synthesis，自动优先挑选中文女声/儿童声。
+ * 朗读使用浏览器内置 Speech Synthesis：自动优先挑选系统童声，并支持手动切换音色。
  */
 
 const Sound = (function () {
   let ctx = null;
   let bgmTimer = null;
   let bgmStep = 0;
-  let settings = { soundOn: true, bgmOn: false, speechOn: true, style: 0, volume: 0.8 };
+  let settings = { soundOn: true, bgmOn: false, speechOn: true, style: 0, voiceURI: '', volume: 0.8 };
+
+  // 童声优先：命中系统里的儿童音色，再用适度变调兜底，避免过度升调产生的机械感
+  const CHILD_RE = /xiaoyou|yunxia|xiaoshuang|child|kid|童|宝宝|萌/i;
 
   const STYLES = [
-    { name:'甜美童声', pitch:1.7,  rate:1.05, emoji:'🧒' },
-    { name:'超级萌音', pitch:1.95, rate:1.15, emoji:'🐣' },
-    { name:'温柔姐姐', pitch:1.35, rate:0.95, emoji:'👧' },
-    { name:'自然朗读', pitch:1.0,  rate:0.9,  emoji:'👩' }
+    { name:'甜美女童', pitch:1.38, rate:1.0,  emoji:'👧', voice:/xiaoyou|xiaoshuang|child|girl|女童/i },
+    { name:'元气男童', pitch:1.18, rate:1.02, emoji:'👦', voice:/yunxia|yunjian|yunye|child|boy|男童/i },
+    { name:'软萌宝宝', pitch:1.52, rate:0.92, emoji:'🐣', voice:/xiaoyou|child|kid|童/i },
+    { name:'温柔姐姐', pitch:1.1,  rate:0.95, emoji:'👩', voice:/xiaoxiao|xiaoyi|huihui|yaoyao|tingting|晓|慧|瑶|怡|婷|女/i },
+    { name:'自然朗读', pitch:1.0,  rate:1.0,  emoji:'🎙️', voice:/xiaoxiao|natural|自然/i }
   ];
 
   const MELODY = [523,659,784,659,587,698,880,698,523,659,784,1047,880,784,659,587];
@@ -82,31 +86,71 @@ const Sound = (function () {
   }
   function stopBgm() { if (bgmTimer) clearInterval(bgmTimer); bgmTimer = null; }
 
-  function pickVoice() {
-    if (!window.speechSynthesis) return null;
-    const vs = window.speechSynthesis.getVoices() || [];
+  function allVoices() {
+    if (!window.speechSynthesis) return [];
+    return window.speechSynthesis.getVoices() || [];
+  }
+
+  // 可选音色列表：只列中文语音，童声排在最前
+  function listVoices() {
+    const vs = allVoices().filter(v =>
+      /^(zh|cmn)/i.test(v.lang || '') || /chinese|普通话|中文/i.test(v.name || ''));
+    return vs.sort((a, b) => voiceRank(b) - voiceRank(a));
+  }
+
+  function voiceRank(v) {
+    const n = v.name || '';
+    return (CHILD_RE.test(n) ? 4 : 0)
+      + (/(^|-)CN|Hans/i.test(v.lang || '') ? 2 : 0)
+      + (/female|女|xiaoxiao|xiaoyi|huihui|yaoyao|tingting/i.test(n) ? 1 : 0);
+  }
+
+  function bestVoice(styleIdx) {
+    const vs = listVoices();
     if (!vs.length) return null;
-    const zh = vs.filter(v => /^(zh|cmn)/i.test(v.lang||'') || /chinese|普通话|中文/i.test(v.name||''));
-    const pool = zh.length ? zh : vs;
-    const girl = pool.filter(v => /huihui|yaoyao|xiaoxiao|xiaoyi|hanhan|tingting|晓|慧|瑶|怡|婷|女|female|child|kid/i.test(v.name||''));
-    return girl[0] || pool.find(v => !/kangkang|male|男/i.test(v.name||'')) || pool[0] || null;
+    const st = STYLES[styleIdx] || STYLES[0];
+    let best = null, score = -1;
+    vs.forEach(v => {
+      const n = v.name || '';
+      let s = 0;
+      if (st.voice && st.voice.test(n)) s += 6;
+      if (CHILD_RE.test(n)) s += 4;
+      if (/female|女/i.test(n)) s += 1;
+      if (s > score) { score = s; best = v; }
+    });
+    return best || vs[0];
+  }
+
+  function pickVoice() {
+    if (settings.voiceURI) {
+      const hit = allVoices().find(v => v.voiceURI === settings.voiceURI);
+      if (hit) return hit;
+    }
+    return bestVoice(settings.style);
   }
 
   function isLatin(text) { return /^[A-Za-z][A-Za-z\s]*$/.test(text || ''); }
 
   function speak(text) {
     if (!settings.speechOn) return;
+    const syn = window.speechSynthesis;
+    if (!syn) return;
+    let clean = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!clean) return;
+    const latin = isLatin(clean);
+    if (!latin) clean = clean.replace(/[，。、；：,.!?！？]+$/, '');
+    const st = STYLES[settings.style] || STYLES[0];
     try {
-      const syn = window.speechSynthesis;
       syn.cancel();
-      const u = new SpeechSynthesisUtterance(text);
-      const st = STYLES[settings.style] || STYLES[0];
-      u.lang = isLatin(text) ? 'en-US' : 'zh-CN';
-      u.rate = isLatin(text) ? Math.min(st.rate, 1) : st.rate;
-      u.pitch = isLatin(text) ? 1.1 : st.pitch;
+      const u = new SpeechSynthesisUtterance(clean);
+      u.lang = latin ? 'en-US' : 'zh-CN';
+      u.rate = latin ? 1 : st.rate;
+      u.pitch = latin ? 1 : st.pitch;
       u.volume = 1;
-      const v = pickVoice();
-      if (v && !isLatin(text)) u.voice = v;
+      const v = latin
+        ? (allVoices().find(x => /^en/i.test(x.lang || '')) || null)
+        : pickVoice();
+      if (v) u.voice = v;
       syn.speak(u);
     } catch (e) {}
   }
@@ -116,7 +160,8 @@ const Sound = (function () {
   }
 
   return {
-    configure, unlock, fx, speak, startBgm, stopBgm, vibrate, pickVoice,
+    configure, unlock, fx, speak, startBgm, stopBgm, vibrate,
+    pickVoice, bestVoice, listVoices,
     STYLES,
     get settings() { return settings; }
   };

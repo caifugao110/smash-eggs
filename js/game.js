@@ -10,7 +10,7 @@
 
   const DEFAULTS = {
     // 声音
-    soundOn: true, bgmOn: false, speechOn: true, style: 0, volume: 0.8,
+    soundOn: true, bgmOn: false, speechOn: true, style: 0, voiceURI: '', volume: 0.8,
     // 难度
     eggCount: 0,        // 0 = 按关卡自动；否则 3~8
     targetCount: 0,     // 0 = 按关卡自动；否则 2~4
@@ -50,7 +50,7 @@
   }
   function save() { try { localStorage.setItem(STORE, JSON.stringify(S)); } catch (e) {} }
   function syncAudio() {
-    Sound.configure({ soundOn:S.soundOn, bgmOn:S.bgmOn, speechOn:S.speechOn, style:S.style, volume:S.volume });
+    Sound.configure({ soundOn:S.soundOn, bgmOn:S.bgmOn, speechOn:S.speechOn, style:S.style, voiceURI:S.voiceURI, volume:S.volume });
   }
 
   /* ---------- 工具 ---------- */
@@ -360,9 +360,22 @@
     return '<div class="set-col"><div class="set-label">'+emoji+' '+label+'</div><div class="chips">'+btns+'</div></div>';
   }
 
+  function voiceChips() {
+    return Sound.STYLES.map(function(s, i){
+      return '<button class="chip '+(S.style===i?'on':'')+'" data-action="set-style" data-v="'+i+'">'+s.emoji+' '+s.name+'</button>';
+    }).join('');
+  }
+  function voiceOptions() {
+    const list = Sound.listVoices();
+    if (!list.length) return '<option value="">自动（优先童声）</option>';
+    return '<option value="">自动（优先童声）</option>' + list.map(function(v){
+      const child = /child|kid|童/i.test(v.name||'') ? ' 🧒' : '';
+      return '<option value="'+v.voiceURI+'"'+(S.voiceURI===v.voiceURI?' selected':'')+'>'+(v.name||v.lang)+child+'</option>';
+    }).join('');
+  }
+
   function renderSettings() {
     state.screen='settings'; recordPlayTime();
-    const style=Sound.STYLES[S.style]||Sound.STYLES[0];
     render('<div class="screen">'+head('⚙️ 家长设置')+
       '<div class="card" style="padding:16px;margin-bottom:14px">'+
         '<h3 style="margin:0 0 10px;color:#E47600">🔊 声音</h3>'+
@@ -370,9 +383,11 @@
         toggleRow('bgmOn','背景音乐','🎵')+
         toggleRow('speechOn','汉字朗读','🗣️')+
         toggleRow('autoSpeak','自动朗读','🔁')+
-        '<div class="set-row"><span style="font-size:24px">'+style.emoji+'</span><span class="txt">朗读声音</span>'+
-          '<button class="btn sm ghost" data-action="voice-style">'+style.name+' ⇄</button>'+
+        '<div class="set-col"><div class="set-label">🎨 朗读音色</div><div class="chips">'+voiceChips()+'</div></div>'+
+        '<div class="set-row"><span style="font-size:24px">🧒</span><span class="txt">系统童声</span>'+
+          '<select data-action="set-voice" style="max-width:150px;border-radius:10px;border:2px solid #FFE0A3;padding:6px;font-family:inherit;font-size:13px">'+voiceOptions()+'</select>'+
           '<button class="icon-btn" data-action="try-voice" style="width:46px;height:46px;font-size:21px">🔊</button></div>'+
+        '<p class="muted" style="margin:4px 0 10px;line-height:1.6">优先自动挑选系统里的儿童音色；若声音仍偏生硬，可在此切换其他音色，或改用 Edge 浏览器（自带更自然的在线童声）。</p>'+
         '<div class="set-row"><span style="font-size:24px">🎚️</span><span class="txt">音量</span>'+
           '<input type="range" min="0" max="100" value="'+Math.round(S.volume*100)+'" data-action="volume" style="width:140px"></div>'+
       '</div>'+
@@ -451,10 +466,9 @@
         save();
         break;
       }
-      case 'voice-style': {
-        S.style=(S.style+1)%Sound.STYLES.length; syncAudio(); save(); renderSettings();
+      case 'set-style': {
+        S.style=+el.dataset.v; syncAudio(); save(); renderSettings();
         Sound.speak('小宝贝，我们一起学汉字');
-        toast('已切换到'+Sound.STYLES[S.style].name);
         break;
       }
       case 'try-voice': Sound.speak('小宝贝，我们一起学汉字'); break;
@@ -510,6 +524,14 @@
     }
   });
 
+  document.addEventListener('change', function(e) {
+    if (e.target.dataset.action==='set-voice') {
+      S.voiceURI=e.target.value; syncAudio(); save();
+      Sound.speak('小宝贝，我们一起学汉字');
+      toast(S.voiceURI?'已切换系统音色':'已改为自动挑选童声');
+    }
+  });
+
   /* 触屏：滑动切换关卡、长按朗读、触摸反馈 */
   let touchStart=null, longPressTimer=null, longPressEl=null;
   app.addEventListener('touchstart', function(e) {
@@ -556,5 +578,16 @@
   }
 
   /* 启动 */
+  let lastVoiceCount = 0;
+  if (window.speechSynthesis) {
+    const onVoices = function() {
+      const n = Sound.listVoices().length;
+      if (n === lastVoiceCount) return;
+      lastVoiceCount = n;
+      if (state.screen==='settings') renderSettings();
+    };
+    window.speechSynthesis.onvoiceschanged = onVoices;
+    setTimeout(onVoices, 300);
+  }
   syncAudio(); applyTheme(); renderHome();
 })();
