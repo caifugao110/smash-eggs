@@ -27,6 +27,7 @@ node_modules/
 
 # 工作区数据（非项目内容）
 .workbuddy/
+.screenshots/
 
 # Trae 预览/分享自动打包产物
 .trae-html-share-packages/

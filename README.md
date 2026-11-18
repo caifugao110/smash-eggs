@@ -79,6 +79,7 @@ smash-eggs/
 ├── start.bat         # Windows 一键启动
 ├── start.sh          # macOS / Linux 一键启动
 ├── cache/audio/      # 运行时生成的童声 mp3 缓存（自动创建，无需提交）
+├── .gitignore        # 忽略缓存、编辑器与工具产物
 ├── LICENSE           # MIT 许可证
 └── README.md
 ```
